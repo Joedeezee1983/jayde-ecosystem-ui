@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useReadContract, useChainId } from 'wagmi';
+import { useReadContract, useChainId, useAccount } from 'wagmi';
 import { CONTRACT_ADDRESSES, JAYDE_MARKETPLACE_ABI, type ContractAddresses } from '@/lib/contracts';
 import ListingCard, { type Listing } from '@/components/ListingCard';
 import CreateListing from '@/components/CreateListing';
+import WrongNetworkBanner from '@/components/WrongNetworkBanner';
 
 export default function MarketplacePage() {
   const chainId   = useChainId();
@@ -19,6 +20,8 @@ export default function MarketplacePage() {
   });
 
   const count = Number(listingCount ?? 0n);
+
+  if (!addresses) return <WrongNetworkBanner />;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
@@ -78,6 +81,9 @@ function ListingItem({
   listingId: bigint;
   addresses: ContractAddresses;
 }) {
+  const { address } = useAccount();
+  const [cancelled, setCancelled] = useState(false);
+
   const { data } = useReadContract({
     address: addresses?.jaydeMarketplace,
     abi: JAYDE_MARKETPLACE_ABI,
@@ -89,10 +95,17 @@ function ListingItem({
   if (!data) return <ListingCardSkeleton />;
 
   const [id, seller, title, price, ipfsHash, isActive] = data;
-  if (!isActive) return null;
+  if (!isActive || cancelled) return null;
 
   const listing: Listing = { id, seller, title, price, ipfsHash, isActive };
-  return <ListingCard listing={listing} />;
+  return (
+    <ListingCard
+      listing={listing}
+      connectedAddress={address}
+      marketplaceAddress={addresses?.jaydeMarketplace}
+      onCancelled={() => setCancelled(true)}
+    />
+  );
 }
 
 function ListingCardSkeleton() {
