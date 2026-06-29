@@ -4,9 +4,20 @@ import { useState } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt, useChainId, useAccount } from 'wagmi';
 import { parseUnits } from 'viem';
 import { CONTRACT_ADDRESSES, JAYDE_MARKETPLACE_ABI } from '@/lib/contracts';
+import TxConfirmModal, { type TxPreview } from '@/components/TxConfirmModal';
+import { captureError } from '@/lib/monitoring';
+// TODO(FE-13): sanitize any IPFS-sourced HTML with lib/sanitize.ts before rendering here
+
+// CIDv0 (Qm…46 chars) or CIDv1 base32 (bafy…59 chars)
+const IPFS_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z2-7]{55})$/;
 
 interface Props {
   onSuccess?: () => void;
+}
+
+interface TxPending {
+  preview: TxPreview;
+  execute: () => void;
 }
 
 export default function CreateListing({ onSuccess }: Props) {
@@ -18,6 +29,8 @@ export default function CreateListing({ onSuccess }: Props) {
   const [price,    setPrice]    = useState('');
   const [ipfsHash, setIpfsHash] = useState('');
   const [error,    setError]    = useState('');
+
+  const [txPending, setTxPending] = useState<TxPending | null>(null);
 
   const { writeContract, data: txHash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
@@ -35,6 +48,18 @@ export default function CreateListing({ onSuccess }: Props) {
       return;
     }
 
+    // FE-11: enforce contract's MAX_TITLE_LENGTH in JS, not just via HTML maxLength
+    if (title.trim().length > 256) {
+      setError('Title must be 256 characters or fewer (contract limit).');
+      return;
+    }
+
+    // FE-7: validate IPFS hash format before the on-chain write
+    if (!IPFS_RE.test(ipfsHash.trim())) {
+      setError('IPFS hash must be a valid CIDv0 (Qm…) or CIDv1 (bafy…).');
+      return;
+    }
+
     let priceParsed: bigint;
     try {
       priceParsed = parseUnits(price, 18);
@@ -43,21 +68,36 @@ export default function CreateListing({ onSuccess }: Props) {
       return;
     }
 
-    writeContract(
-      {
-        address: addresses.jaydeMarketplace,
-        abi: JAYDE_MARKETPLACE_ABI,
+    // FE-8: show confirmation modal before wallet prompt fires
+    const snapshot = { title: title.trim(), ipfsHash: ipfsHash.trim(), priceParsed };
+    setTxPending({
+      preview: {
+        contractAddress: addresses.jaydeMarketplace,
         functionName: 'createListing',
-        args: [title.trim(), priceParsed, ipfsHash.trim()],
+        amountJayde: price,
+        description: `List "${snapshot.title}" for ${price} JAYDE`,
       },
-      {
-        onSuccess: () => {
-          setTitle(''); setPrice(''); setIpfsHash('');
-          onSuccess?.();
-        },
-        onError: (err) => setError(err.message.slice(0, 120)),
+      execute: () => {
+        writeContract(
+          {
+            address: addresses.jaydeMarketplace!,
+            abi: JAYDE_MARKETPLACE_ABI,
+            functionName: 'createListing',
+            args: [snapshot.title, snapshot.priceParsed, snapshot.ipfsHash],
+          },
+          {
+            onSuccess: () => {
+              setTitle(''); setPrice(''); setIpfsHash('');
+              onSuccess?.();
+            },
+            onError: (err) => {
+              captureError(err, { tags: { kind: 'contract_write', fn: 'createListing' } });
+              setError(err.message.slice(0, 120));
+            },
+          },
+        );
       },
-    );
+    });
   }
 
   if (!isConnected) {
@@ -69,58 +109,68 @@ export default function CreateListing({ onSuccess }: Props) {
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="rounded-2xl border border-slate-700/60 bg-[#1e293b] p-6 space-y-4"
-    >
-      <h2 className="text-lg font-bold text-white">Create a Listing</h2>
-
-      <Field label="Title">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          maxLength={256}
-          placeholder="e.g. Vintage leather jacket"
-          className={inputCls}
+    <>
+      {txPending && (
+        <TxConfirmModal
+          preview={txPending.preview}
+          onConfirm={() => { txPending.execute(); setTxPending(null); }}
+          onCancel={() => setTxPending(null)}
         />
-      </Field>
-
-      <Field label="Price (JAYDE)">
-        <input
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          type="number"
-          min="0"
-          step="any"
-          placeholder="100"
-          className={inputCls}
-        />
-      </Field>
-
-      <Field label="IPFS Hash (image / description)">
-        <input
-          value={ipfsHash}
-          onChange={(e) => setIpfsHash(e.target.value)}
-          maxLength={128}
-          placeholder="QmXyZ..."
-          className={inputCls}
-        />
-      </Field>
-
-      {error && <p className="text-sm text-red-400">{error}</p>}
-
-      {isSuccess && (
-        <p className="text-sm text-[#0d9488] font-medium">Listing created successfully!</p>
       )}
 
-      <button
-        type="submit"
-        disabled={isPending || isConfirming}
-        className="w-full rounded-xl bg-[#0d9488] py-3 text-sm font-semibold text-white transition hover:bg-[#0f766e] disabled:opacity-50"
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-2xl border border-slate-700/60 bg-[#1e293b] p-6 space-y-4"
       >
-        {isPending ? 'Confirm in wallet…' : isConfirming ? 'Confirming…' : 'Create Listing'}
-      </button>
-    </form>
+        <h2 className="text-lg font-bold text-white">Create a Listing</h2>
+
+        <Field label="Title">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={256}
+            placeholder="e.g. Vintage leather jacket"
+            className={inputCls}
+          />
+        </Field>
+
+        <Field label="Price (JAYDE)">
+          <input
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            type="number"
+            min="0"
+            step="any"
+            placeholder="100"
+            className={inputCls}
+          />
+        </Field>
+
+        <Field label="IPFS Hash (image / description)">
+          <input
+            value={ipfsHash}
+            onChange={(e) => setIpfsHash(e.target.value)}
+            maxLength={128}
+            placeholder="QmXyZ…"
+            className={inputCls}
+          />
+        </Field>
+
+        {error && <p className="text-sm text-red-400">{error}</p>}
+
+        {isSuccess && (
+          <p className="text-sm text-[#0d9488] font-medium">Listing created successfully!</p>
+        )}
+
+        <button
+          type="submit"
+          disabled={isPending || isConfirming}
+          className="w-full rounded-xl bg-[#0d9488] py-3 text-sm font-semibold text-white transition hover:bg-[#0f766e] disabled:opacity-50"
+        >
+          {isPending ? 'Confirm in wallet…' : isConfirming ? 'Confirming…' : 'Create Listing'}
+        </button>
+      </form>
+    </>
   );
 }
 

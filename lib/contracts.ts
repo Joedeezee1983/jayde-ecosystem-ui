@@ -1,21 +1,47 @@
 import { baseSepolia, hardhat } from './wagmi';
 
+// ─── Validation ──────────────────────────────────────────────────────────────
+
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+// Accepts the env var name and its pre-read value (caller must use dot-notation
+// to read process.env so Next.js webpack can inline NEXT_PUBLIC_* at build time).
+export function requireAddress(name: string, val: string | undefined): `0x${string}` {
+  if (!val || !ADDRESS_RE.test(val)) {
+    throw new Error(
+      `Env var ${name} must be a valid Ethereum address (^0x[0-9a-fA-F]{40}$), got: ${val ?? 'undefined'}`,
+    );
+  }
+  return val as `0x${string}`;
+}
+
 // ─── Addresses ──────────────────────────────────────────────────────────────
 
-export const CONTRACT_ADDRESSES = {
-  [hardhat.id]: {
-    jaydeToken:      '0x5FbDB2315678afecb367f032d93F642f64180aa3' as `0x${string}`,
-    jaydeEscrow:     '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512' as `0x${string}`,
-    jaydeMarketplace:'0x' as `0x${string}`, // not yet deployed to hardhat
-  },
-  [baseSepolia.id]: {
-    jaydeToken:       process.env.NEXT_PUBLIC_TOKEN_ADDRESS       as `0x${string}`,
-    jaydeEscrow:      process.env.NEXT_PUBLIC_ESCROW_ADDRESS      as `0x${string}`,
-    jaydeMarketplace: process.env.NEXT_PUBLIC_MARKETPLACE_ADDRESS as `0x${string}`,
-  },
-} as const;
+type AddressSet = {
+  jaydeToken:       `0x${string}`;
+  jaydeEscrow:      `0x${string}`;
+  jaydeMarketplace: `0x${string}`;
+};
 
-export type ContractAddresses = (typeof CONTRACT_ADDRESSES)[keyof typeof CONTRACT_ADDRESSES] | undefined;
+const _addrs: Record<number, AddressSet> = {
+  [baseSepolia.id]: {
+    jaydeToken:       requireAddress('NEXT_PUBLIC_TOKEN_ADDRESS',       process.env.NEXT_PUBLIC_TOKEN_ADDRESS),
+    jaydeEscrow:      requireAddress('NEXT_PUBLIC_ESCROW_ADDRESS',      process.env.NEXT_PUBLIC_ESCROW_ADDRESS),
+    jaydeMarketplace: requireAddress('NEXT_PUBLIC_MARKETPLACE_ADDRESS', process.env.NEXT_PUBLIC_MARKETPLACE_ADDRESS),
+  },
+};
+
+if (process.env.NODE_ENV === 'development') {
+  _addrs[hardhat.id] = {
+    jaydeToken:       '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+    jaydeEscrow:      '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
+    jaydeMarketplace: '0x',
+  };
+}
+
+export const CONTRACT_ADDRESSES = _addrs;
+
+export type ContractAddresses = AddressSet | undefined;
 
 // ─── ABIs ────────────────────────────────────────────────────────────────────
 

@@ -4,6 +4,7 @@ import { useAccount, useReadContract, useWriteContract, useWaitForTransactionRec
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { formatUnits } from 'viem';
 import { CONTRACT_ADDRESSES, JAYDE_TOKEN_ABI, JAYDE_MARKETPLACE_ABI, type ContractAddresses } from '@/lib/contracts';
+import WrongNetworkBanner from '@/components/WrongNetworkBanner';
 
 export default function ProfilePage() {
   const { address, isConnected } = useAccount();
@@ -24,6 +25,8 @@ export default function ProfilePage() {
     functionName: 'purchaseCount',
     query: { enabled: !!addresses?.jaydeMarketplace },
   });
+
+  if (!addresses) return <WrongNetworkBanner />;
 
   if (!isConnected) {
     return (

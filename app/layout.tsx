@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import Providers from './providers';
 import Navbar from '@/components/Navbar';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -15,10 +16,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${inter.className} bg-[#0f172a] text-white antialiased`}>
-        <Providers>
-          <Navbar />
-          <main>{children}</main>
-        </Providers>
+        <ErrorBoundary>
+          <Providers>
+            <Navbar />
+            <main>{children}</main>
+          </Providers>
+        </ErrorBoundary>
       </body>
     </html>
   );
